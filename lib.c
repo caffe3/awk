@@ -225,31 +225,33 @@ extern int readcsvrec(char **pbuf, int *pbufsize, FILE *inf, bool newflag);
 
 int readrec(char **pbuf, int *pbufsize, FILE *inf, bool newflag)	/* read one record into buf */
 {
-	int sep, c, isrec; // POTENTIAL BUG? isrec is a macro in awk.h
+	int sep, c;
 	char *rr = *pbuf, *buf = *pbuf;
 	int bufsize = *pbufsize;
 	char *rs = getsval(rsloc);
+	const char *rt = NULL;
+	bool patfound = false;
 
 	if (CSV) {
 		c = readcsvrec(pbuf, pbufsize, inf, newflag);
-		isrec = (c == EOF && rr == buf) ? false : true;
+		rt = (c == EOF && rr == buf) ? NULL : rs;
 	} else if (*rs && rs[1]) {
-		bool found;
-
 		memset(buf, 0, bufsize);
 		fa *pfa = makedfa(rs, 1);
 		if (newflag)
-			found = fnematch(pfa, inf, &buf, &bufsize, recsize);
+			patfound = fnematch(pfa, inf, &buf, &bufsize, recsize);
 		else {
 			int tempstat = pfa->initstat;
 			pfa->initstat = 2;
-			found = fnematch(pfa, inf, &buf, &bufsize, recsize);
+			patfound = fnematch(pfa, inf, &buf, &bufsize, recsize);
 			pfa->initstat = tempstat;
 		}
-		if (found)
-			setptr(patbeg, '\0');
-		isrec = (found == 0 && *buf == '\0') ? false : true;
-
+		if (patfound)
+			rt = patbeg;
+		else if (*buf != '\0')
+			rt = buf;
+		else
+			rt = NULL;
 	} else {
 		if ((sep = *rs) == 0) {
 			sep = '\n';
@@ -279,12 +281,19 @@ int readrec(char **pbuf, int *pbufsize, FILE *inf, bool newflag)	/* read one rec
 		if (!adjbuf(&buf, &bufsize, 1+rr-buf, recsize, &rr, "readrec 3"))
 			FATAL("input record `%.30s...' too long", buf);
 		*rr = 0;
-		isrec = (c == EOF && rr == buf) ? false : true;
+		rt = (c == EOF && rr == buf) ? NULL : rs;
 	}
 	*pbuf = buf;
 	*pbufsize = bufsize;
-	DPRINTF("readrec saw <%s>, returns %d\n", buf, isrec);
-	return isrec;
+
+	if (rt)
+		setsval(rtloc, rt);
+
+	if (patfound)
+		setptr(patbeg, '\0');
+
+	DPRINTF("readrec saw <%s>, returns %d\n", rt ? rt : "", !!rt);
+	return rt ? 1 : 0;
 }
 
 
