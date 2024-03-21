@@ -234,7 +234,7 @@ int readrec(char **pbuf, int *pbufsize, FILE *inf, bool newflag)	/* read one rec
 
 	if (CSV) {
 		c = readcsvrec(pbuf, pbufsize, inf, newflag);
-		rt = (c == EOF && rr == buf) ? NULL : rs;
+		rt = (c == EOF) ? NULL : "\n"; /* always \n in readcsvrec */
 	} else if (*rs && rs[1]) {
 		memset(buf, 0, bufsize);
 		fa *pfa = makedfa(rs, 1);
@@ -249,6 +249,9 @@ int readrec(char **pbuf, int *pbufsize, FILE *inf, bool newflag)	/* read one rec
 		DPRINTF("readrec: found=%d, patbeg=%s\n", found, patbeg);
 		rt = found ? patbeg : NULL;
 	} else {
+		int n = 0;
+
+		rt = NULL;
 		if ((sep = *rs) == 0) {
 			sep = '\n';
 			while ((c=getc(inf)) == '\n' && c != EOF)	/* skip leading \n's */
@@ -256,28 +259,37 @@ int readrec(char **pbuf, int *pbufsize, FILE *inf, bool newflag)	/* read one rec
 			if (c != EOF)
 				ungetc(c, inf);
 		}
-		for (rr = buf; ; ) {
-			for (; (c=getc(inf)) != sep && c != EOF; ) {
-				if (rr-buf+1 > bufsize)
-					if (!adjbuf(&buf, &bufsize, 1+rr-buf,
-					    recsize, &rr, "readrec 1"))
-						FATAL("input record `%.30s...' too long", buf);
-				*rr++ = c;
-			}
-			if (*rs == sep || c == EOF)
-				break;
-			if ((c = getc(inf)) == '\n' || c == EOF)	/* 2 in a row */
-				break;
-			if (!adjbuf(&buf, &bufsize, 2+rr-buf, recsize, &rr,
-			    "readrec 2"))
-				FATAL("input record `%.30s...' too long", buf);
-			*rr++ = '\n';
+
+		for (rr = buf; ((c=getc(inf)) != sep || (!*rs && n < 1)) && c != EOF; ) {
+			n = (c == sep) ? n + 1 : 0;
+			if (rr-buf+1 > bufsize)
+				if (!adjbuf(&buf, &bufsize, 1+rr-buf,
+				    recsize, &rr, "readrec 1"))
+					FATAL("input record `%.30s...' too long", buf);
 			*rr++ = c;
 		}
-		if (!adjbuf(&buf, &bufsize, 1+rr-buf, recsize, &rr, "readrec 3"))
-			FATAL("input record `%.30s...' too long", buf);
-		*rr = 0;
-		rt = (c == EOF && rr == buf) ? NULL : rs;
+
+		if (c != EOF) {
+			rt = rr - n;
+			*rr++ = c;
+
+			if (!*rs) {
+				n = 0;
+				while ((c=getc(inf)) == '\n' && c != EOF)	/* skip trailing \n's */
+					++n;
+				if (c != EOF)
+					ungetc(c, inf);
+				if (rr-buf+n+1 > bufsize)
+					if (!adjbuf(&buf, &bufsize, 1+n+rr-buf,
+					    recsize, &rr, "readrec 1"))
+						FATAL("input record `%.30s...' too long", buf);
+				while (n-- > 0) *rr++ = '\n';
+				*rr = '\0';
+			}
+		} else if (rr != buf) {
+			rt = rr - n;
+			*rr = '\0';
+		}
 	}
 	*pbuf = buf;
 	*pbufsize = bufsize;
@@ -289,6 +301,8 @@ int readrec(char **pbuf, int *pbufsize, FILE *inf, bool newflag)	/* read one rec
 
 		if (found) /* remove pattern RS from record buffer */
 			setptr(patbeg, '\0');
+		else if (!CSV) /* or newline */
+			setptr(rt, '\0');
 	}
 
 	return rt ? 1 : 0;
